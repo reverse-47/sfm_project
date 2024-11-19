@@ -242,10 +242,8 @@ class SFM(object):
                             reprojectionError=self.opts.reprojection_thres)
         R,_=cv2.Rodrigues(R)
         self.image_data[name] = [R,t,np.ones((ref_len,))*-1]
-
-    def ToPly(self, filename):
         
-        def _GetColors(): 
+    def _GetColors(self): 
             colors = np.zeros_like(self.point_cloud)
             
             for k in self.image_data.keys(): 
@@ -261,7 +259,9 @@ class SFM(object):
             
             return colors
 
-        colors = _GetColors()
+    def ToPly(self, filename):
+
+        colors = self._GetColors()
         pts2ply(self.point_cloud, colors, filename)
 
     def _ComputeReprojectionError(self, name): 
@@ -293,40 +293,26 @@ class SFM(object):
         
     def Run(self):
         name1, name2 = self.image_names[0], self.image_names[1]
-
         total_time, errors = 0, []
 
+        # Baseline pose estimation and triangulation
         t1 = time()
         self._BaselinePoseEstimation(name1, name2)
         t2 = time()
         this_time = t2-t1
         total_time += this_time
-        print('Baseline Cameras {0}, {1}: Pose Estimation [time={2:.3}s]'.format(name1, name2,
-                                                                                 this_time))
+        print('Baseline Cameras {0}, {1}: Pose Estimation [time={2:.3}s]'.format(name1, name2, this_time))
 
         self._TriangulateTwoViews(name1, name2)
         t1 = time()
         this_time = t1-t2
         total_time += this_time
-        print('Baseline Cameras {0}, {1}: Baseline Triangulation [time={2:.3}s]'.format(name1, 
-                                                                                name2, this_time))
+        print('Baseline Cameras {0}, {1}: Baseline Triangulation [time={2:.3}s]'.format(name1, name2, this_time))
 
         views_done = 2 
 
-        #3d point cloud generation and reprojection error evaluation
-        self.ToPly(os.path.join(self.out_cloud_dir, 'cloud_{}_view.ply'.format(views_done)))
-
-        err1 = self._ComputeReprojectionError(name1)
-        err2 = self._ComputeReprojectionError(name2)
-        errors.append(err1)
-        errors.append(err2)
-
-        print('Camera {}: Reprojection Error = {}'.format(name1, err1))
-        print('Camera {}: Reprojection Error = {}'.format(name2, err2))
-
+        # Process remaining views
         for new_name in self.image_names[2:]: 
-
-            #new camera registration
             t1 = time()
             self._NewViewPoseEstimation(new_name)
             t2 = time()
@@ -334,24 +320,27 @@ class SFM(object):
             total_time += this_time
             print('Camera {0}: Pose Estimation [time={1:.3}s]'.format(new_name, this_time))
 
-            #triangulation for new registered camera
             self._TriangulateNewView(new_name)
             t1 = time()
             this_time = t1-t2
             total_time += this_time
             print('Camera {0}: Triangulation [time={1:.3}s]'.format(new_name, this_time))
+            views_done += 1
 
-            #3d point cloud update and error for new camera
-            views_done += 1 
-            self.ToPly(os.path.join(self.out_cloud_dir, 'cloud_{}_view.ply'.format(views_done)))
-
-            new_err = self._ComputeReprojectionError(new_name)
-            errors.append(new_err)
-            print('Camera {}: Reprojection Error = {}'.format(new_name, new_err))
-
-        mean_error = sum(errors) / float(len(errors))
+        # Only save and visualize the final point cloud
+        final_cloud_path = os.path.join(self.out_cloud_dir, 'final_point_cloud.ply')
+        self.ToPly(final_cloud_path)
+        
+        # Compute final reprojection errors
+        total_error = 0
+        for name in self.image_names:
+            error = self._ComputeReprojectionError(name)
+            print('Camera {}: Reprojection Error = {}'.format(name, error))
+            total_error += error
+        
+        mean_error = total_error / len(self.image_names)
         print('Reconstruction Completed: Mean Reprojection Error = {2} [t={0:.6}s], \
-                Results stored in {1}'.format(total_time, self.opts.out_dir, mean_error))
+                Results stored in {1}'.format(total_time, final_cloud_path, mean_error))
         
 
 def SetArguments(parser): 
@@ -413,5 +402,12 @@ if __name__=='__main__':
     opts = parser.parse_args()
     PostprocessArgs(opts)
     
+    # Import visualization utilities
+    from visualize import modify_sfm_class
+    
+    # Modify SFM class to add visualization
+    SFM = modify_sfm_class(SFM)
+    
+    # Create and run SFM as usual
     sfm = SFM(opts)
     sfm.Run()

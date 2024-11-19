@@ -1,3 +1,4 @@
-opencv-python
-numpy
-matplotlib
+Numpy >= 1.13.1
+OpenCV 3
+Meshlab
+open3d
